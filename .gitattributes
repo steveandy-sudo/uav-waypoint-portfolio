@@ -1,0 +1,2 @@
+src/** -text
+docs/SOURCE_MANIFEST.csv text eol=lf
