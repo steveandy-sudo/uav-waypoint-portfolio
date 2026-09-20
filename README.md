@@ -1,79 +1,66 @@
 # ROS 2 UAV Waypoint Mission
 
-**CSV-defined 3D missions, TF2 pose feedback, and PX4 offboard integration in Gazebo.**
+**A CSV-driven flight mission for the Autonomous System Platform course at Konkuk University.**
 
-[한국어](README.ko.md) · [Project portfolio](https://steveandy-sudo.github.io/projects/uav-waypoint/) · [Mission implementation](src/uav_waypoint_mission/uav_waypoint_mission/uav_waypoint_node.py) · [Setup](docs/SETUP.md)
+[한국어](README.ko.md) · [Project portfolio](https://steveandy-sudo.github.io/projects/uav-waypoint/) · [Mission code](src/uav_waypoint_mission/uav_waypoint_mission/uav_waypoint_node.py) · [Setup](docs/SETUP.md)
 
-I developed a ROS 2 mission package that turns a waypoint sequence into pose targets for a PX4 offboard controller. It tracks the UAV through TF2, evaluates arrival in three dimensions, advances to the next target, and exposes mission controls and progress for integration with the course simulation platform.
+The mission layer turns a list of 3D waypoints into position targets for a PX4 offboard controller. TF2 feedback determines when to advance to the next waypoint, while start, hold, reset, and progress interfaces make the mission observable within the integrated simulation.
 
-| Context | Details |
-| --- | --- |
-| Course | Autonomous System Platform, Konkuk University |
-| Period | May–June 2026 |
-| Team | Four members |
-| Focus | UAV waypoint mission development and controller integration |
-| Environment | ROS 2 Humble · PX4 SITL · Gazebo · TF2 · Micro XRCE-DDS |
-| Final demonstration | Sequential waypoint flight and final landing completed in simulation |
+| Period | Team | Development focus | Environment |
+| --- | --- | --- | --- |
+| May–June 2026 | 4 members | UAV waypoint mission and controller integration | ROS 2 Humble · PX4 SITL · Gazebo · TF2 · Micro XRCE-DDS |
 
-## Outcome
+## Results and evidence
 
-The final course demonstration used `uav_waypoint_mission` within the integrated PX4 SITL/Gazebo system. The UAV followed the waypoint sequence and completed the final landing. The archived workspace was confirmed as the final demonstration version.
+| Setting | Evidence | Conclusion |
+| --- | --- | --- |
+| Final course demonstration | Project-author confirmation of sequential flight and final landing | **Waypoint mission and landing completed in simulation** |
+| Final workspace | Author-confirmed archive; [source record](docs/SOURCE_MAP.md) | Final mission and supporting ROS packages preserved |
+| Included route | [CSV with nine targets](src/uav_waypoint_mission/config/waypoints.csv) | Concrete input for reading the mission logic |
+| Offline preparation checks | [File integrity, syntax, package metadata, and route checks](docs/VALIDATION.md) | Source collection checked; SITL replay remains a separate task |
 
-The repository preserves the mission package and its ROS-side integration dependencies. The included route contains **nine waypoints**. [Experiment notes](docs/EXPERIMENTS.md) distinguish the reported demonstration from the checks performed when collecting this repository.
+The final demonstration used the integrated course system. A fresh replay needs the matching simulator assets and launch configuration; coordinate and landing interfaces are documented in [SETUP.md](docs/SETUP.md). No repeated-trial success rate or measured tracking-error result is available.
 
-## Development focus
-
-- **Waypoint execution:** CSV position and yaw input, sequential goal selection, 3D distance checks, and configurable arrival tolerance.
-- **Pose and coordinate handling:** TF2 feedback, fallback UAV frames, map/ENU output, and origin-relative local-NED output for different controller interfaces.
-- **Mission lifecycle:** start, stop, reset, position hold, progress messages, and current-goal publication.
-- **Finish behavior:** hold, land, disarm, and land-then-disarm options; the land-then-disarm path checks altitude before requesting disarm.
-- **Integration and observation:** `PoseStamped` commands to the offboard controller, optional waypoint-specific gimbal pitch, and a launch configuration for simulation.
-
-## System flow
+## System architecture
 
 ```mermaid
 flowchart LR
     CSV[Waypoint CSV] --> Mission[ROS 2 waypoint mission]
-    Sim[PX4 SITL / Gazebo] --> TF[Gazebo pose to TF2]
-    TF --> Mission
+    Sim[PX4 SITL / Gazebo] --> TF[Gazebo poses to TF2]
+    TF -->|Current pose| Mission
     User[Start / stop / reset] --> Mission
-    Mission -->|PoseStamped| Controller[PX4 offboard controller]
-    Controller -->|DDS setpoints| Sim
-    Mission --> Status[Status / current goal]
-    Mission --> Finish[Finish-command interfaces]
+    Mission -->|PoseStamped target| Controller[PX4 offboard controller]
+    Controller -->|DDS setpoint| Sim
+    Mission --> Status[Progress and current target]
+    Mission -.-> Finish[Course landing / finish integration]
 ```
 
-The mission layer decides **which target comes next**; the offboard controller converts commands into PX4 setpoints. Matching coordinate conventions and the launch-time TF tree is central to this interface. The archived controller performs ENU-to-NED conversion itself; the setup notes explain how this differs from the mission launch default.
+The mission node selects **where to go next**. The offboard controller translates the pose target into PX4 setpoints. The dashed finish path represents a course integration dependency: the mission publishes a landing request, while the corresponding receiver is not identified in the collected controller.
+
+## Design and implementation
+
+| Concern | Implementation | Reason to inspect it |
+| --- | --- | --- |
+| Route progression | CSV parsing and 3D target-distance comparison | A position criterion makes waypoint transitions explicit |
+| Coordinate conventions | Map/ENU or initial-position-relative local NED output | Axes and origin must match the downstream controller |
+| Mission control | Start, stop, reset, and current-position hold | Mission transitions can be observed independently of flight control |
+| Completion | Hold, land, disarm, and land-then-disarm options | Reaching the final waypoint and completing landing are distinct events |
+
+The source defaults to a **20 Hz mission loop** and **1.0 m arrival tolerance**. These are configuration settings, not measured flight accuracy. In particular, the archived controller already converts ENU to NED; applying the mission's local-NED conversion as well would convert the axes twice. The setup guide explains origin alignment, TF names, and completion handling.
 
 ## Code guide
 
-| Start here | What to read |
+| Component | Start here |
 | --- | --- |
-| [Mission node](src/uav_waypoint_mission/uav_waypoint_mission/uav_waypoint_node.py) | `load_waypoints`, `make_command_pose`, `timer_callback`, start/stop/reset callbacks |
-| [Mission launch](src/uav_waypoint_mission/launch/waypoint_mission.launch.py) | Runtime parameters and topic connections |
-| [Waypoint CSV](src/uav_waypoint_mission/config/waypoints.csv) | Nine map-frame targets, yaw and optional gimbal pitch |
-| [Offboard controller](src/px4_ros_com/src/examples/offboard/offboard_control.cpp) | Pose input, ENU/NED conversion, PX4 messages, altitude-conditioned disarm |
-| [Pose-to-TF bridge](src/gazebo_env_setup/src/pose_tf_broadcaster.cpp) | Gazebo model poses exposed in the ROS TF tree |
+| Mission state and waypoint selection | [Mission node](src/uav_waypoint_mission/uav_waypoint_mission/uav_waypoint_node.py) |
+| Parameters and topic wiring | [Mission launch](src/uav_waypoint_mission/launch/waypoint_mission.launch.py) |
+| Route input | [Waypoint CSV](src/uav_waypoint_mission/config/waypoints.csv) |
+| Target-to-PX4 interface | [Offboard controller](src/px4_ros_com/src/examples/offboard/offboard_control.cpp) |
+| Simulator position feedback | [Pose-to-TF broadcaster](src/gazebo_env_setup/src/pose_tf_broadcaster.cpp) |
 
-## Repository structure
+## Build and integration
 
-```text
-src/
-  uav_waypoint_mission/  # Main mission implementation
-  px4_ros_com/           # Archived offboard controller and transform utilities
-  px4_msgs/              # Message definitions from the same workspace
-  gazebo_env_setup/     # Simulation bridges, TF and launch configuration
-docs/
-  SETUP.md              # Build, interfaces and integration checks
-  EXPERIMENTS.md        # Demonstration and reproduction record
-  SOURCE_MAP.md         # Archive provenance and collection scope
-  SOURCE_MANIFEST.csv   # Original paths, modes and SHA-256 hashes
-  VALIDATION.md         # Checks performed on this collection
-```
-
-## Build the mission package
-
-In a ROS 2 Humble environment, from this repository root:
+The repository includes four packages: `uav_waypoint_mission`, `px4_ros_com`, `px4_msgs`, and `gazebo_env_setup`. Build the mission package in ROS 2 Humble with its dependencies installed:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -81,10 +68,12 @@ colcon build --base-paths src/uav_waypoint_mission
 source install/setup.bash
 ```
 
-Running a mission also requires PX4 SITL, the course Gazebo environment, the DDS agent, a working TF tree, and a compatible controller. See [setup and integration notes](docs/SETUP.md) before choosing coordinate and finish settings. The original source and launch defaults are preserved.
+A full run also needs PX4 SITL, the course Gazebo world/models, Micro XRCE-DDS, and compatible TF/controller interfaces. The archived Gazebo package requests `gz-msgs10` and `gz-transport13`. Source files and launch defaults remain unchanged.
 
-## Engineering lessons
+- **Reproduce:** [Build, coordinates, TF, and finish integration](docs/SETUP.md)
+- **Assess:** [Demonstration and proposed replay record](docs/EXPERIMENTS.md) · [Validation](docs/VALIDATION.md)
+- **Trace:** [Source archive and collection scope](docs/SOURCE_MAP.md)
 
-The project connected a compact mission state machine to a larger flight stack. The key integration questions were the origin and axes of each pose command, when a target counts as reached, how to keep the current goal observable, and how mission completion connects to the landing controller.
+## Engineering takeaway
 
-[Source provenance](docs/SOURCE_MAP.md) · [Validation record](docs/VALIDATION.md)
+The central integration problem is agreement between nodes: the same target must mean the same axes and origin to both mission and controller, the arrival test must be observable, and mission completion must connect to the flight stack's landing behavior. These interfaces provide the structure for a reproducible replay and a future position-error analysis.
